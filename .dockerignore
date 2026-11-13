@@ -1,0 +1,48 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Version control
+.git/
+.gitignore
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Data and generated artifacts
+data/
+outputs/
+artifacts/
+models/
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# Not needed in the image
+tests/
+notebooks/
+docs/

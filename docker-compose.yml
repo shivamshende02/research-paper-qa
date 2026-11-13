@@ -1,0 +1,199 @@
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+
+    ports:
+      - "5434:5432"
+
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+    networks:
+      - backend
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    security_opt:
+      - no-new-privileges:true
+
+  # Redis background job broker
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    ports:
+      - "6380:6379"
+
+    command: ["redis-server", "--appendonly", "yes"]
+
+    volumes:
+      - redis-data:/data
+
+    networks:
+      - backend
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    security_opt:
+      - no-new-privileges:true
+
+  # Main ML pipeline
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: ml-pipeline:latest
+    command: ["python", "main.py"]
+
+    environment:
+      MODEL_SERVICE_URL: http://model-service:8000
+      MODEL_ARTIFACTS_DIR: /app/artifacts
+      DATA_DIR: /app/data
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      - model-artifacts:/app/artifacts
+      - pipeline-data:/app/data
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+
+    networks:
+      - backend
+      - egress
+
+    restart: unless-stopped
+    init: true
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Model inference service
+  model-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: ml-pipeline:latest
+    command: ["python", "app.py"]
+
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      MODEL_ARTIFACTS_DIR: /app/artifacts
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      - model-artifacts:/app/artifacts:ro
+
+    networks:
+      - backend
+
+    restart: unless-stopped
+    init: true
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+
+  qdrant:
+    image: qdrant/qdrant:v1.16.2
+    container_name: vaani-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "bash", "-c", "timeout 2 bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+  model-artifacts:
+  pipeline-data:
+  qdrant-data:
+
+networks:
+  backend:
+    driver: bridge
+
+  egress:
+    driver: bridge
